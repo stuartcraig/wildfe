@@ -1,8 +1,7 @@
 /*---------------------------------------------------------------------wildfe.do
 
-
 Stuart Craig
-20180424
+20190401
 */
 
 
@@ -10,7 +9,7 @@ Stuart Craig
 
 cap prog drop wildfe
 prog define wildfe, rclass
-	syntax varlist [if] [in] [aweight], absorb(varlist) [cluster(varname)] [weights(string)] [niter(real 1000)]
+	syntax varlist [if] [in] [aweight] , absorb(varlist) [cluster(varname)] [weights(string)] [niter(real 1000)]
 
 /*
 -------------------------------------------
@@ -45,7 +44,6 @@ Preliminaries
 -------------------------------------------
 
 Implement the actual BS procedure
-- Why is this taking so long?
 
 -------------------------------------------
 */				
@@ -75,12 +73,13 @@ Implement the actual BS procedure
 			qui gen `W2'=(sqrt(5) + 1)/2
 			loc cut = (sqrt(5) - 1)/(2*sqrt(5))
 		}
-	* noi di "`weight'", "`exp'"
+	
 	// Iterate:
 	di in yellow "+==============================================================+"
 	di in yellow "+ Running Bootstrap Iterations                                 +"
 	di in yellow "+==============================================================+"
 	
+	sort `cluster'
 	cap timer clear
 	timer on 1
 		forval iter=1/`niter' {
@@ -99,13 +98,13 @@ Implement the actual BS procedure
 			
 			// Cluster the errors if required
 			if "`cluster'"!="" {
-				qbys `cluster': replace `W' = `W'[1]
+				qby `cluster': replace `W' = `W'[1]
 			}
 			tempvar ystar
 			cap drop `ystar'
 			qui gen `ystar' = `xb' + `r'*`W'
 			* reg `ystar' `indvars'
-			qui reghdfe `ystar' `indvars' if `touse' [`weight' `exp'], absorb(`absorb') fast
+			qui reghdfe `ystar' `indvars' if `touse' [`weight' `exp'] , absorb(`absorb') 
 			
 			loc cc=0
 			foreach v of varlist `indvars' {
@@ -129,9 +128,20 @@ Implement the actual BS procedure
 	// Display the results (crudely):
 	preserve
 		use `results', clear
-		collapse (mean) Coeff=b (sd) SE=b, by(ivar) fast
 		
-		list ivar SE, noobs
+		cap drop p_lower
+		cap drop p_upper
+		qui gen p_lower=.
+		qui gen p_upper=.
+		qui levelsof ivar, local(vars)
+		foreach var of local vars {
+			qui _pctile b if ivar=="`var'", p(2.5, 97.5)
+			qui replace p_lower = r(r1) if ivar=="`var'"
+			qui replace p_upper = r(r2) if ivar=="`var'"
+		}
+		collapse (mean) Coeff=b (sd) SE=b (max) p_ll=p_lower p_ul=p_upper, by(ivar) fast
+		
+		list ivar SE p_*, noobs
 		// Return the SEs
 		cap drop n
 		qui gen n=_n
@@ -139,6 +149,8 @@ Implement the actual BS procedure
 		foreach ivar of local ivars {
 			qui summ n if ivar=="`ivar'", mean
 			return scalar se_`ivar' = SE[r(mean)]
+			return scalar p_ll_`ivar' = p_ll[r(mean)]
+			return scalar p_ul_`ivar'= p_ul[r(mean)]
 		}
 	restore
 	
